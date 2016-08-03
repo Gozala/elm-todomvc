@@ -34,8 +34,6 @@ main =
 
 port setStorage : Model -> Cmd msg
 
-port focus : String -> Cmd msg
-
 
 {-| We want to `setStorage` on every update. This function adds the setStorage
 command for every step of the update function.
@@ -58,11 +56,35 @@ updateWithStorage msg model =
 -- The full application state of our todo app.
 type alias Model =
     { entries : List Entry
-    , field : String
+    , field : Field
     , uid : Int
     , visibility : String
     }
 
+type alias Field =
+  { value : String
+  , focus : Bool
+  -- selection : Selection
+  }
+
+{-
+Editable input fields MUST keep track of selection range otherwise things can
+get out of sync with DOM state, because value update also updates selection
+which can cause incorrect behavior. Leaveing it out for now as it's not quite
+related to focus management.
+
+type Direction
+  = None
+  | Forward
+  | Backward
+  
+  
+type alias Selection =
+  { start : Int
+  , end : Int
+  , direction : Direction
+  }
+-}
 
 type alias Entry =
     { description : String
@@ -106,6 +128,8 @@ to them.
 type Msg
     = NoOp
     | UpdateField String
+    | FocusField
+    | BlurField
     | EditingEntry Int Bool
     | UpdateEntry Int String
     | Add
@@ -136,8 +160,15 @@ update msg model =
         ! []
 
     UpdateField str ->
-      { model | field = str }
+      { model | field = { model.field | value = str }
         ! []
+      }
+        
+    FocusField ->
+      { model | field = { model.field | focus = True }
+    
+    FocusField ->
+      { model | field = { model.field | focus = False }
 
     EditingEntry id isEditing ->
       let
@@ -145,7 +176,7 @@ update msg model =
           if t.id == id then { t | editing = isEditing } else t
       in
         { model | entries = List.map updateEntry model.entries }
-          ! [ focus ("#todo-" ++ toString id) ]
+          ! []
 
     UpdateEntry id task ->
       let
@@ -204,8 +235,8 @@ view model =
     ]
 
 
-viewInput : String -> Html Msg
-viewInput task =
+viewInput : Field -> Html Msg
+viewInput field =
   header
     [ class "header" ]
     [ h1 [] [ text "todos" ]
@@ -213,10 +244,53 @@ viewInput task =
         [ class "new-todo"
         , placeholder "What needs to be done?"
         , autofocus True
-        , value task
+        , value field.value
+        {- We pretent that `Html` is different in following way: 
+          
+          -- Setter here is somewhat similar to hooks from VirtualDOM library in that
+          -- that they are passed value & corresponding HTMLElement and they return
+          -- task which presumably does something to that HTMLElement.
+          -- https://github.com/Matt-Esch/virtual-dom/blob/master/docs/hooks.md#hooks
+          -- Note that task can not error neither it's return anything, it's somewhat
+          -- similar to HTML library itself, if it fails to reflect view onto DOM that
+          -- is it's own problem not a consumers.
+          type alias Setter value = value -> HTMLElement -> Task Never ()
+
+          -- Setting just takes setter and value it supposed to set on an HTML element
+          -- that contains it.
+          setting : Setter value -> value -> Attribute msg
+          
+          -- Most users should not care about settings or setters as Html library will provide
+          -- settings to cover the web platform.
+          focused : boolean -> Attribute msg
+          focused = setting setElementFocus
+          
+          -- Finally focusSetter is somethig that will have native implementation.
+          focusSetter : boolean -> HTMLElement -> Task Never ()
+          -- Which will likely be something along these lines:
+          focusSetter = function(value, element) {
+            var task = _elm_lang$core$Native_Scheduler.nativeBinding(function run(callback) {
+              if (value) {
+                element.focus();
+                // If element did not get focused, it is because this is initial render and
+                // in such task is run before element are in the document tree and there for
+                // calls to`.focus()` has no effect. In such case we just reschedule the task
+                if (element.ownerDocument.activeElement !== element) {
+                  _elm_lang$core$Native_Scheduler.spawn(task)
+                }
+              } else {
+                element.blur()
+              }
+              callback(succeed(_elm_lang$core$Native_Utils.Tuple0))
+            })
+            return task
+        -}
+        , Html.Attributes.focused field.focus
         , name "newTodo"
         , onInput UpdateField
         , onEnter Add
+        , onFocus FocusField
+        , onBlur BlurField
         ]
         []
     ]
@@ -309,6 +383,7 @@ viewEntry todo =
         , onInput (UpdateEntry todo.id)
         , onBlur (EditingEntry todo.id False)
         , onEnter (EditingEntry todo.id False)
+        , Html.Attributes.focused todo.editing
         ]
         []
     ]
